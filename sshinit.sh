@@ -7,6 +7,20 @@ max_password_attempts=6
 unlock_time=3600
 max_ssh_attempts=6
 
+# 检测是否是 root 用户
+is_root=false
+if [ "$EUID" -eq 0 ]; then
+    is_root=true
+fi
+
+function run_command() {
+    if $is_root; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 echo "ubuntu ssh 快捷配置"
 # 检查是否以sudo身份运行脚本
 if [ "$EUID" -ne 0 ]; then
@@ -36,13 +50,13 @@ case $choice in
         if id "$admin_username" &>/dev/null; then
             # 用户已存在，只修改密码
             echo "用户 $admin_username 已存在，仅修改密码"
-            sudo id "$admin_username"
-            sudo passwd "$admin_username"
+            run_command id "$admin_username"
+            run_command passwd "$admin_username"
         else
             # 用户不存在，创建用户并设置密码
             echo "创建用户 $admin_username 并设置密码"
-            sudo useradd -m -s /bin/bash "$admin_username"
-            sudo passwd "$admin_username"
+            run_command useradd -m -s /bin/bash "$admin_username"
+            run_command passwd "$admin_username"
         fi
         ;;
     2)
@@ -52,25 +66,24 @@ case $choice in
         root_authorized_keys="/root/.ssh/authorized_keys"
         if [ -f "$root_authorized_keys" ]; then
             # 检查是否已存在相同的公钥
-            if ! sudo grep -q "$ssh_public_key" "$root_authorized_keys"; then
+            if ! grep -q "$ssh_public_key" "$root_authorized_keys"; then
                 # 追加新的公钥
-                echo "$ssh_public_key" | sudo tee -a "$root_authorized_keys" >/dev/null
+                echo "$ssh_public_key" | run_command tee -a "$root_authorized_keys" >/dev/null
                 echo "已成功追加 SSH 公钥到 root 用户"
             else
                 echo "SSH 公钥已存在于 root 用户的授权密钥文件中"
             fi
         else
             # 检查是否存在.ssh路径
-            if [ ! -d "/root/.ssh" ];then
-                sudo mkdir "/root/.ssh"
+            if [ ! -d "/root/.ssh" ]; then
+                run_command mkdir "/root/.ssh"
             fi
 
             # 创建新的文件并写入公钥
-            echo "$ssh_public_key" | sudo tee "$root_authorized_keys" >/dev/null
-            sudo chown root:root "$root_authorized_keys"
-            sudo chmod 600 "$root_authorized_keys"
+            echo "$ssh_public_key" | run_command tee "$root_authorized_keys" >/dev/null
+            run_command chown root:root "$root_authorized_keys"
+            run_command chmod 600 "$root_authorized_keys"
             echo "已成功创建 SSH 公钥文件并写入到 root 用户"
-            sudo grep "$ssh_public_key" "$root_authorized_keys"
         fi
         ;;
     3)
@@ -89,109 +102,67 @@ case $choice in
         admin_authorized_keys="/home/$admin_username/.ssh/authorized_keys"
         if [ -f "$admin_authorized_keys" ]; then
             # 检查是否已存在相同的公钥
-            if ! sudo grep -q "$ssh_public_key" "$admin_authorized_keys"; then
+            if ! grep -q "$ssh_public_key" "$admin_authorized_keys"; then
                 # 追加新的公钥
-                echo "$ssh_public_key" | sudo tee -a "$admin_authorized_keys" >/dev/null
+                echo "$ssh_public_key" | run_command tee -a "$admin_authorized_keys" >/dev/null
                 echo "已成功追加 SSH 公钥到 admin 用户"
             else
                 echo "SSH 公钥已存在于 admin 用户的授权密钥文件中"
             fi
         else
             # 检查是否存在.ssh路径
-            if [ ! -d "/home/$admin_username/.ssh" ];then
-                sudo mkdir "/home/$admin_username/.ssh"
+            if [ ! -d "/home/$admin_username/.ssh" ]; then
+                run_command mkdir "/home/$admin_username/.ssh"
             fi
 
             # 创建新的文件并写入公钥
-            echo "$ssh_public_key" | sudo tee "$admin_authorized_keys" >/dev/null
-            sudo chown "$admin_username:$admin_username" "$admin_authorized_keys"
-            sudo chmod 600 "$admin_authorized_keys"
+            echo "$ssh_public_key" | run_command tee "$admin_authorized_keys" >/dev/null
+            run_command chown "$admin_username:$admin_username" "$admin_authorized_keys"
+            run_command chmod 600 "$admin_authorized_keys"
             echo "已成功创建 SSH 公钥文件并写入到 admin 用户"
-            sudo grep "$ssh_public_key" "$admin_authorized_keys"
         fi
         ;;
     4)
-        # 配置 root 用户仅通过密钥登录 SSH
-        echo "查找 /etc/ssh/sshd_config 中相关配置："
-        if sudo grep  "^PermitRootLogin" /etc/ssh/sshd_config; then
-            sudo sed -i "/^PermitRootLogin/c\PermitRootLogin without-password # 禁止root用户通过口令" /etc/ssh/sshd_config
-            echo "已成功配置 root 用户仅通过密钥登录 SSH, 重启sshd生效"
-            sudo grep "^PermitRootLogin" /etc/ssh/sshd_config
-        elif sudo grep  "^#PermitRootLogin" /etc/ssh/sshd_config; then
-            sudo sed -i "/^#PermitRootLogin/c\PermitRootLogin without-password # 禁止root用户通过口令" /etc/ssh/sshd_config
-            echo "已成功配置 root 用户仅通过密钥登录 SSH, 重启sshd生效"
-            sudo grep "^PermitRootLogin" /etc/ssh/sshd_config
+        echo "配置 root 用户仅通过密钥登录 SSH"
+        ssh_config="/etc/ssh/sshd_config"
+        if grep -q "^PermitRootLogin" "$ssh_config"; then
+            run_command sed -i "/^PermitRootLogin/c\\PermitRootLogin without-password # 禁止root用户通过口令" "$ssh_config"
         else
-            echo "未在/etc/ssh/sshd_config 中找到对应配置, 请手动完成"
+            echo "PermitRootLogin without-password" | run_command tee -a "$ssh_config" >/dev/null
         fi
+        echo "已成功配置 root 用户仅通过密钥登录 SSH, 重启sshd生效"
         ;;
     5)
-        # 配置 fail2ban 最大口令尝试次数
-        # 检查是否安装 fail2ban
-        if sudo systemctl status fail2ban &> /dev/null; then  
+        echo "配置 fail2ban 最大口令尝试次数"
+        if run_command systemctl status fail2ban &>/dev/null; then
             echo "fail2ban 已安装"
-            echo "使用 fail2ban-client status 或 fail2ban-client status sshd 查看状态"
-
-        else  
-            echo "fail2ban 未安装"
-            echo "正在运行sudo apt-get update 和 sudo apt-get install -y fail2ban, 若长时间无响应请手动安装"
-            sudo apt-get update &> /dev/null
-            sudo apt-get install -y fail2ban &> /dev/null
-            if sudo systemctl status fail2ban |grep "active (running)" &> /dev/null; then
-                echo "fail2ban 运行成功"
-                echo "使用 fail2ban-client status 或 fail2ban-client status sshd 查看状态"
-            else
-                echo "fail2ban 安装或启动失败"
-                exit 1
-            fi
+        else
+            echo "安装 fail2ban"
+            run_command apt-get update && run_command apt-get install -y fail2ban
         fi
-
-        # read -p "请输入 fail2ban 最大口令尝试次数 (默认: $max_password_attempts): " input_max_password_attempts
-        # max_password_attempts="${input_max_password_attempts:-$max_password_attempts}"
-        # read -p "请输入 fail2ban 失败锁定时间 (默认: $unlock_time 秒): " input_unlock_time
-        # unlock_time="${input_unlock_time:-$unlock_time}"
-
-        # # 配置 fail2ban 最大口令尝试次数
-        # sed -i "/^maxretry/c\bantime =$max_password_attempts" /etc/fail2ban/jail.conf
-        # sed -i "/^bantime/c\bantime =$unlock_time" /etc/fail2ban/jail.conf
-        # echo "已成功配置fail2ban最大口令尝试次数"
-        # sudo grep  "^maxretry" /etc/fail2ban/jail.conf
-        # sudo grep  "^bantime" /etc/fail2ban/jail.conf
         ;;
     6)
-        # 配置 PAM 最大口令尝试次数
-        echo "不推荐, 会拒绝全局登录而非根据IP识别, Ctrl C 退出"
+        echo "配置 PAM 最大口令尝试次数"
         read -p "请输入 PAM 最大口令尝试次数 (默认: $max_password_attempts): " input_max_password_attempts
         max_password_attempts="${input_max_password_attempts:-$max_password_attempts}"
         read -p "请输入 PAM 失败锁定时间 (默认: $unlock_time 秒): " input_unlock_time
         unlock_time="${input_unlock_time:-$unlock_time}"
 
-        # 配置 PAM 最大口令尝试次数
-        echo "查找 /etc/pam.d/common-auth 中相关配置："
-        if sudo grep  "^auth required pam_tally2.so " /etc/pam.d/common-auth; then
-            echo "已存在最大口令尝试次数配置, 如需更改请手动编辑 /etc/pam.d/common-auth"
-        elif sudo grep  "# here are the per-package modules" /etc/pam.d/common-auth; then
-            sudo sed -i "/# here are the per-package modules/a\auth required pam_tally2.so onerr=fail deny=$max_password_attempts unlock_time=$unlock_time  even_deny_root root_unlock_time=$unlock_time # 设置最大口令尝试次数" /etc/pam.d/common-auth
-            echo "已成功配置 PAM 最大口令尝试次数"
-            sudo grep "auth required pam_tally2.so " /etc/pam.d/common-auth
+        if grep -q "pam_tally2.so" /etc/pam.d/common-auth; then
+            echo "PAM 配置已存在"
         else
-            echo "未在/etc/pam.d/common-auth 中找到对应配置, 请手动完成"
+            echo "auth required pam_tally2.so onerr=fail deny=$max_password_attempts unlock_time=$unlock_time" | run_command tee -a /etc/pam.d/common-auth >/dev/null
         fi
         ;;
-        
     7)
-        # 配置 SSH 最大口令尝试次数
-        echo "不推荐, 会拒绝全局登录而非根据IP识别, Ctrl C 退出"
+        echo "配置 SSH 最大口令尝试次数"
         read -p "请输入 SSH 最大口令尝试次数 (默认: $max_ssh_attempts): " input_max_ssh_attempts
         max_ssh_attempts="${input_max_ssh_attempts:-$max_ssh_attempts}"
-        
-        # 配置 SSH 最大口令尝试次数
-        if sudo grep "^MaxAuthTries" /etc/ssh/sshd_config; then
-            echo "已存在最大口令尝试次数配置, 如需更改请手动编辑 /etc/ssh/sshd_config"
+
+        if grep -q "^MaxAuthTries" "$ssh_config"; then
+            echo "SSH 配置已存在"
         else
-            echo "MaxAuthTries $max_ssh_attempts  # 设置SSH最大口令尝试次数" | sudo tee -a /etc/ssh/sshd_config >/dev/null
-            echo "已成功配置 SSH 最大口令尝试次数"
-            sudo grep "^MaxAuthTries" /etc/ssh/sshd_config
+            echo "MaxAuthTries $max_ssh_attempts" | run_command tee -a "$ssh_config" >/dev/null
         fi
         ;;
     *)

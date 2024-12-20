@@ -35,6 +35,7 @@ echo "2. 为 root 用户配置 ssh 公钥"
 echo "3. 为 admin 用户配置 ssh 公钥"
 echo "4. 配置 root 用户仅通过密钥登录 SSH"
 echo "5. 防暴力破解, 通过 fail2ban"
+echo "5.1 增加配置并重启 fail2ban"
 echo "6. 防暴力破解, 通过 PAM(不推荐)"
 echo "7. 防暴力破解, 通过 SSH(不推荐)"
 
@@ -136,10 +137,25 @@ case $choice in
         echo "配置 fail2ban 最大口令尝试次数"
         if run_command systemctl status fail2ban &>/dev/null; then
             echo "fail2ban 已安装"
+            echo "启动 fail2ban 服务"
+            run_command systemctl start fail2ban
         else
             echo "安装 fail2ban"
             run_command apt-get update && run_command apt-get install -y fail2ban
+            run_command systemctl start fail2ban
         fi
+        ;;
+    5.1)
+        echo "增加配置并重启 fail2ban"
+        fail2ban_config="/etc/fail2ban/jail.local"
+        echo "[DEFAULT]" | run_command tee "$fail2ban_config" >/dev/null
+        echo "bantime = 3600" | run_command tee -a "$fail2ban_config" >/dev/null
+        echo "findtime = 600" | run_command tee -a "$fail2ban_config" >/dev/null
+        echo "maxretry = 5" | run_command tee -a "$fail2ban_config" >/dev/null
+        echo "[sshd]" | run_command tee -a "$fail2ban_config" >/dev/null
+        echo "enabled = true" | run_command tee -a "$fail2ban_config" >/dev/null
+        echo "配置完成，重启 fail2ban 服务"
+        run_command systemctl restart fail2ban
         ;;
     6)
         echo "配置 PAM 最大口令尝试次数"
